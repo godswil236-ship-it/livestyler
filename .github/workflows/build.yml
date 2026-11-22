@@ -157,20 +157,20 @@ jobs:
 
               val styles: List<Style> = listOf(
                   Style("Plain"),
-                  Style("Heavy block", upper = true, capBase = 0x1F170, lowBase = 0x1F170),
-                  Style("Heavy circle", upper = true, capBase = 0x1F150, lowBase = 0x1F150),
                   Style("Bold CAPS", upper = true, capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC),
-                  Style("Wide CAPS", upper = true, capBase = 0xFF21, lowBase = 0xFF21, digitBase = 0xFF10),
                   Style("Bold", capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC),
                   Style("Bold italic", capBase = 0x1D63C, lowBase = 0x1D656, digitBase = 0x1D7EC),
                   Style("Script", capBase = 0x1D4D0, lowBase = 0x1D4EA),
+                  Style("Wide CAPS", upper = true, capBase = 0xFF21, lowBase = 0xFF21, digitBase = 0xFF10),
                   Style("Small caps", smallCaps = true),
+                  Style("Heavy circle", upper = true, capBase = 0x1F150, lowBase = 0x1F150),
+                  Style("Heavy block", upper = true, capBase = 0x1F170, lowBase = 0x1F170),
                   Style(
-                      "GIANT letters", upper = true, capBase = 0x1F1E6, lowBase = 0x1F1E6,
+                      "Android only: GIANT", upper = true, capBase = 0x1F1E6, lowBase = 0x1F1E6,
                       post = { codePoints(it).joinToString("\u200B") }
                   ),
                   Style(
-                      "GIANT boxed", upper = true, capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC,
+                      "Android only: boxed", upper = true, capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC,
                       post = { mark(it, "\u20DE") }
                   )
               )

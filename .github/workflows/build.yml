@@ -1,0 +1,299 @@
+name: Build Live Styler APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+      - name: Create project files
+        run: |
+          cat > settings.gradle.kts <<'EOF_FILE'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "LiveStyler"
+          include(":app")
+          EOF_FILE
+          cat > build.gradle.kts <<'EOF_FILE'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF_FILE
+          cat > gradle.properties <<'EOF_FILE'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF_FILE
+          mkdir -p app
+          cat > app/build.gradle.kts <<'EOF_FILE'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.example.livestyler"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.livestyler"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOF_FILE
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:label="Live Styler">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".StyleKeyboardService"
+                      android:label="Live Styler"
+                      android:exported="true"
+                      android:permission="android.permission.BIND_INPUT_METHOD">
+                      <intent-filter>
+                          <action android:name="android.view.InputMethod" />
+                      </intent-filter>
+                      <meta-data android:name="android.view.im" android:resource="@xml/method" />
+                  </service>
+              </application>
+          </manifest>
+          EOF_FILE
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/method.xml <<'EOF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <input-method xmlns:android="http://schemas.android.com/apk/res/android" />
+          EOF_FILE
+          mkdir -p app/src/main/java/com/example/livestyler
+          cat > app/src/main/java/com/example/livestyler/MainActivity.kt <<'EOF_FILE'
+          package com.example.livestyler
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.os.Bundle
+          import android.provider.Settings
+
+          class MainActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                  finish()
+              }
+          }
+          EOF_FILE
+          mkdir -p app/src/main/java/com/example/livestyler
+          cat > app/src/main/java/com/example/livestyler/StyleEngine.kt <<'EOF_FILE'
+          package com.example.livestyler
+
+          /** Turns plain text into styled Unicode text. Pure Kotlin, no Android classes. */
+          object StyleEngine {
+
+              private const val SMALL_CAPS = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ"
+
+              class Style(
+                  val name: String,
+                  private val upper: Boolean = false,
+                  private val capBase: Int = -1,
+                  private val lowBase: Int = -1,
+                  private val digitBase: Int = -1,
+                  private val exceptions: Map<Char, Int> = emptyMap(),
+                  private val smallCaps: Boolean = false,
+                  private val post: ((String) -> String)? = null
+              ) {
+                  fun apply(input: String): String {
+                      val s = if (upper) input.uppercase() else input
+                      val sb = StringBuilder()
+                      for (ch in s) {
+                          val ex = exceptions[ch]
+                          when {
+                              smallCaps && ch in 'a'..'z' -> sb.append(SMALL_CAPS[ch - 'a'])
+                              smallCaps && ch in 'A'..'Z' -> sb.append(SMALL_CAPS[ch - 'A'])
+                              ex != null -> sb.appendCodePoint(ex)
+                              capBase >= 0 && ch in 'A'..'Z' -> sb.appendCodePoint(capBase + (ch - 'A'))
+                              lowBase >= 0 && ch in 'a'..'z' -> sb.appendCodePoint(lowBase + (ch - 'a'))
+                              digitBase >= 0 && ch in '0'..'9' -> sb.appendCodePoint(digitBase + (ch - '0'))
+                              else -> sb.append(ch)
+                          }
+                      }
+                      val out = sb.toString()
+                      return post?.invoke(out) ?: out
+                  }
+              }
+
+              data class Frame(val name: String, val a: String, val b: String)
+
+              private fun codePoints(s: String): List<String> =
+                  s.codePoints().toArray().map { String(Character.toChars(it)) }
+
+              private fun mark(s: String, m: String) =
+                  codePoints(s).joinToString("") { if (it.isBlank()) it else it + m }
+
+              val styles: List<Style> = listOf(
+                  Style("Plain"),
+                  Style("Heavy block", upper = true, capBase = 0x1F170, lowBase = 0x1F170),
+                  Style("Heavy circle", upper = true, capBase = 0x1F150, lowBase = 0x1F150),
+                  Style("Bold CAPS", upper = true, capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC),
+                  Style("Wide CAPS", upper = true, capBase = 0xFF21, lowBase = 0xFF21, digitBase = 0xFF10),
+                  Style("Bold", capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC),
+                  Style("Bold italic", capBase = 0x1D63C, lowBase = 0x1D656, digitBase = 0x1D7EC),
+                  Style("Script", capBase = 0x1D4D0, lowBase = 0x1D4EA),
+                  Style("Small caps", smallCaps = true),
+                  Style(
+                      "GIANT letters", upper = true, capBase = 0x1F1E6, lowBase = 0x1F1E6,
+                      post = { codePoints(it).joinToString("\u200B") }
+                  ),
+                  Style(
+                      "GIANT boxed", upper = true, capBase = 0x1D5D4, lowBase = 0x1D5EE, digitBase = 0x1D7EC,
+                      post = { mark(it, "\u20DE") }
+                  )
+              )
+
+              val frames: List<Frame> = listOf(
+                  Frame("None", "", ""),
+                  Frame("Stars", "✦ ", " ✦"),
+                  Frame("Fire", "🔥 ", " 🔥"),
+                  Frame("Crown", "👑 ", " 👑"),
+                  Frame("Pin", "📌 ", ""),
+                  Frame("Big fire", "🔥🔥🔥 ", " 🔥🔥🔥"),
+                  Frame("MEGA", "🔥🔥🔥🔥 👑 ", " 👑 🔥🔥🔥🔥")
+              )
+          }
+          EOF_FILE
+          mkdir -p app/src/main/java/com/example/livestyler
+          cat > app/src/main/java/com/example/livestyler/StyleKeyboardService.kt <<'EOF_FILE'
+          package com.example.livestyler
+
+          import android.inputmethodservice.InputMethodService
+          import android.view.KeyEvent
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.inputmethod.EditorInfo
+          import android.widget.Button
+          import android.widget.HorizontalScrollView
+          import android.widget.LinearLayout
+
+          class StyleKeyboardService : InputMethodService() {
+
+              companion object {
+                  const val MAX_LEN = 150 // adjust to your app's comment limit
+                  // Edit these to your own saved quick comments.
+                  val SNIPPETS = listOf("first!", "hello chef", "love this", "what's next?", "🔥🔥🔥")
+              }
+
+              private val raw = StringBuilder()
+              private var style = StyleEngine.styles[1]
+              private var frame = StyleEngine.frames[0]
+              private var shift = false
+
+              private val styleChips = mutableListOf<Button>()
+              private val frameChips = mutableListOf<Button>()
+              private var shiftKey: Button? = null
+
+              private val bgRoot = 0xFF120D1E.toInt()
+              private val bgKey = 0xFF2B2140.toInt()
+              private val bgOn = 0xFFE8286B.toInt()
+              private val ink = 0xFFF1ECFB.toInt()
+
+              override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+                  super.onStartInputView(info, restarting)
+                  raw.clear()
+              }
+
+              override fun onCreateInputView(): View {
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(bgRoot)
+                      setPadding(dp(4), dp(4), dp(4), dp(6))
+                  }
+
+                  root.addView(scrollRow(StyleEngine.styles.map { it.name }, styleChips, 1) { i ->
+                      style = StyleEngine.styles[i]; refresh()
+                  })
+                  root.addView(scrollRow(StyleEngine.frames.map { it.name }, frameChips, 0) { i ->
+                      frame = StyleEngine.frames[i]; refresh()
+                  })
+                  root.addView(scrollRow(SNIPPETS, null, -1) { i -> addText(SNIPPETS[i]) })
+
+                  root.addView(keyRow("1234567890".map { it.toString() }))
+                  root.addView(keyRow("qwertyuiop".map { it.toString() }))
+                  root.addView(keyRow("asdfghjkl".map { it.toString() }))
+
+                  val row3 = row()
+                  shiftKey = key("⇧", 1.5f) { shift = !shift; paintShift() }
+                  row3.addView(shiftKey)
+                  "zxcvbnm".forEach { c -> row3.addView(key(c.toString(), 1f) { typeKey(c) }) }
+                  row3.addView(key("⌫", 1.5f) { backspace() })
+                  root.addView(row3)
+
+                  val row4 = row()
+                  row4.addView(key(",", 1f) { addText(",") })
+                  row4.addView(key("space", 5f) { addText(" ") })
+                  row4.addView(key(".", 1f) { addText(".") })
+                  row4.addView(key("Send", 2f, bgOn) { send() })
+                  root.addView(row4)
+
+                  paintChips(styleChips, StyleEngine.styles.indexOf(style))
+                  paintChips(frameChips, StyleEngine.frames.indexOf(frame))
+                  return root
+              }
+
+              // ----- text handling -----
+
+              private fun display(text: String) = frame.a + style.apply(text) + frame.b
+
+              private fun addText(t: String) {
+                  val candidate = raw.toString() + t
+                  if (display(candidate).length > MAX_LEN) return
+                  raw.append(t)
+                  refresh()
+              }
+
+              private fun typeKey(c: Char) {
+                  addText(if (shift) c.uppercaseChar().toString() else c.toString())
+                  if (shift) { shift = false; paintShift() }
+              }
+
+              private fun backspace() {
+                  if (raw.isEmpty()) {
+                      sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                      return
+                  }
+                  raw.setLength(raw.offsetByCodePoints(raw.length, -1))
+                  refresh()
+              }
+
+              private fun refresh() {
+                  val ic = currentInputConnection ?: return
+                  if (raw.isEmpty()) {
+                      ic.setComposingText("", 1)
+                      ic.finishComposingText()
+                  } else {
+                      ic.setComposingText(display(raw.toString()), 1)
+                  }
+                  paintChips(styleChips, StyleEngine.styles.

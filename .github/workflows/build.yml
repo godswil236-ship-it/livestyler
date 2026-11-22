@@ -12,7 +12,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
@@ -296,4 +297,91 @@ jobs:
                   } else {
                       ic.setComposingText(display(raw.toString()), 1)
                   }
-                  paintChips(styleChips, StyleEngine.styles.
+                  paintChips(styleChips, StyleEngine.styles.indexOf(style))
+                  paintChips(frameChips, StyleEngine.frames.indexOf(frame))
+              }
+
+              private fun send() {
+                  val ic = currentInputConnection ?: return
+                  ic.finishComposingText()
+                  raw.clear()
+                  val action = (currentInputEditorInfo?.imeOptions ?: 0) and EditorInfo.IME_MASK_ACTION
+                  if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                      ic.performEditorAction(action)
+                  } else {
+                      sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+                  }
+              }
+
+              // ----- view helpers -----
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              private fun row() = LinearLayout(this).apply {
+                  orientation = LinearLayout.HORIZONTAL
+                  layoutParams = LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                  )
+              }
+
+              private fun keyRow(labels: List<String>): LinearLayout {
+                  val r = row()
+                  labels.forEach { l -> r.addView(key(l, 1f) { typeKey(l[0]) }) }
+                  return r
+              }
+
+              private fun key(label: String, weight: Float, color: Int = bgKey, onClick: () -> Unit): Button =
+                  Button(this).apply {
+                      text = label
+                      isAllCaps = false
+                      setTextColor(ink)
+                      textSize = 16f
+                      minWidth = 0; minimumWidth = 0
+                      setPadding(0, 0, 0, 0)
+                      setBackgroundColor(color)
+                      layoutParams = LinearLayout.LayoutParams(0, dp(46), weight).apply {
+                          setMargins(dp(2), dp(3), dp(2), dp(3))
+                      }
+                      setOnClickListener { onClick() }
+                  }
+
+              private fun scrollRow(
+                  labels: List<String>, store: MutableList<Button>?, selected: Int, onPick: (Int) -> Unit
+              ): HorizontalScrollView {
+                  val inner = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  labels.forEachIndexed { i, l ->
+                      val b = Button(this).apply {
+                          text = l
+                          isAllCaps = false
+                          textSize = 13f
+                          setTextColor(ink)
+                          setBackgroundColor(bgKey)
+                          minHeight = 0; minimumHeight = 0
+                          setPadding(dp(12), dp(6), dp(12), dp(6))
+                          layoutParams = LinearLayout.LayoutParams(
+                              ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)
+                          ).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+                          setOnClickListener { onPick(i) }
+                      }
+                      store?.add(b)
+                      inner.addView(b)
+                  }
+                  return HorizontalScrollView(this).apply {
+                      isHorizontalScrollBarEnabled = false
+                      addView(inner)
+                  }
+              }
+
+              private fun paintChips(chips: List<Button>, selected: Int) {
+                  chips.forEachIndexed { i, b -> b.setBackgroundColor(if (i == selected) bgOn else bgKey) }
+              }
+
+              private fun paintShift() = shiftKey?.setBackgroundColor(if (shift) bgOn else bgKey)
+          }
+          EOF_FILE
+      - name: Build
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiveStyler-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
